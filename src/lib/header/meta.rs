@@ -3,18 +3,16 @@ use crate::{Magic, Region};
 
 use std::convert::{TryFrom, TryInto as _};
 
+#[derive(Clone, Copy)]
 pub struct Metadata {
     pub fmt_flag: bool,
-    pub pkg_version: u64,
     pub img_version: u64,
     pub seg_count: u64,
     pub header_size: u64,
     pub data_size: u64,
 }
 
-impl LoadableRegion<'_> for Metadata {
-
-}
+impl LoadableRegion<'_> for Metadata {}
 
 impl TryFrom<&[u8; Self::SIZE]> for Metadata {
     type Error = crate::Error;
@@ -41,12 +39,27 @@ impl TryFrom<&[u8; Self::SIZE]> for Metadata {
 
         Ok(Self {
             fmt_flag,
-            pkg_version,
             img_version,
             seg_count,
             header_size,
             data_size,
         })
+    }
+}
+
+impl From<Metadata> for [u8; Metadata::SIZE] {
+    fn from(meta: Metadata) -> Self {
+        let mut data = [0; Metadata::SIZE];
+
+        data[0x00..0x07].copy_from_slice(&Magic::default().0);
+        data[0x07] = meta.fmt_flag as u8;
+        data[0x08..0x10].copy_from_slice(&Metadata::PKG_VERSION.to_be_bytes());
+        data[0x10..0x18].copy_from_slice(&meta.img_version.to_be_bytes());
+        data[0x18..0x20].copy_from_slice(&meta.seg_count.to_be_bytes());
+        data[0x20..0x28].copy_from_slice(&meta.header_size.to_be_bytes());
+        data[0x28..0x30].copy_from_slice(&meta.data_size.to_be_bytes());
+
+        data
     }
 }
 

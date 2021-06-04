@@ -1,7 +1,12 @@
 use pupper::Pup;
 use yansi::Paint;
 
-use std::{convert::TryInto as _, fs, io::Write as _, path::{Path, PathBuf}};
+use std::{
+    convert::TryInto as _,
+    fs,
+    io::Write as _,
+    path::{Path, PathBuf},
+};
 
 macro_rules! format_err {
     ($($arg:tt)*) => {
@@ -44,7 +49,8 @@ fn do_command_with_args(command: &str, args: &[String]) {
                 Err(err) => println_err!("{}", err),
             };
         }
-        "extract" => {
+        "pack" => (),
+        "unpack" => {
             if args.is_empty() {
                 return println_err!("'{}' is missing 'input' argument", command);
             }
@@ -69,7 +75,7 @@ fn do_command_with_args(command: &str, args: &[String]) {
             };
 
             match read_pup_at_path(pup_path) {
-                Ok(ref pup) => extract_pup_to_dir(pup, &dir),
+                Ok(ref pup) => unpack_pup_into_dir(pup, &dir),
                 Err(err) => println_err!("{}", err),
             };
         }
@@ -85,30 +91,28 @@ fn print_usage() {
     println!("COMMANDS:");
     println!("  help                    Prints this help information.");
     println!("  print <input:PUP>       Prints a textual representation of <input>.");
-    println!("  extract <input:PUP> [<output:DIR>]");
-    println!("                          Extracts <input> to <output> (defaults to <input> without a file extension or, if <input> already has no extension, to <input>.out.");
+    println!("  pack <input:DIR> [<output:PUP>]");
+    println!("                          Packs <input> into <output> (defaults to <input> without a file extension or, if <input> already has no extension, to <input>.pup.");
+    println!("  unpack <input:PUP> [<output:DIR>]");
+    println!("                          Unpacks <input> into <output> (defaults to <input> without a file extension or, if <input> already has no extension, to <input>.out.");
 }
 
 fn program_name() -> String {
-    std::env::args()
-        .next()
-        .unwrap_or_else(|| "pupper".into())
+    std::env::args().next().unwrap_or_else(|| "pupper".into())
 }
 
 fn read_pup_at_path(path: &Path) -> Result<Pup, String> {
     match fs::read(path) {
-        Ok(data) => {
-            data.as_slice()
-                .try_into()
-                .map_err(|err| format!("failed to read from PUP: {}", err))
-        }
+        Ok(data) => data
+            .as_slice()
+            .try_into()
+            .map_err(|err| format!("failed to read from PUP: {}", err)),
         Err(err) => Err(format!("failed to read from '{}': {}", path.display(), err)),
     }
 }
 
 fn print_pup(pup: &Pup) {
-    println!("Package version: {}", pup.package_version());
-    println!("Image version:   {}", pup.image_version());
+    println!("Image version: {:#x}", pup.image_version);
 
     for seg in &pup.segments {
         println!("--------------------");
@@ -118,33 +122,35 @@ fn print_pup(pup: &Pup) {
             None => println!("ID: {:#x}", seg.id.0),
         };
 
-        println!("Signature kind: {}", seg.sig_kind);
-        println!("Size: {}", seg.data.len());
+        println!("Size: {} bytes", seg.data.len());
 
-        let digest: String = seg.digest.0
-            .iter()
-            .map(|x| format!("{:02x}", x))
-            .collect();
-
-        println!("Digest: {}", digest);
+        let digest: String = seg.digest.0.iter().map(|x| format!("{:02x}", x)).collect();
+        println!("Digest: {} ({})", digest, seg.sig_kind);
     }
 }
 
-fn extract_pup_to_dir(pup: &Pup, dir: &Path) {
+fn unpack_pup_into_dir(pup: &Pup, dir: &Path) {
     if let Err(err) = fs::create_dir_all(dir) {
         return println_err!("failed to create directory at '{}': {}", dir.display(), err);
     }
 
     for (i, seg) in pup.segments.iter().enumerate() {
-        let file_name = seg.id
+        let file_name = seg
+            .id
             .file_name()
             .unwrap_or_else(|| format!("seg-{}.bin", i));
 
         let path = dir.join(file_name);
 
         match fs::File::create(&path) {
-            Ok(mut file) => if let Err(err) = file.write_all(&seg.data) {
-                return println_err!("failed to write to file at '{}': {}", path.display(), err);
+            Ok(mut file) => {
+                if let Err(err) = file.write_all(&seg.data) {
+                    return println_err!(
+                        "failed to write to file at '{}': {}",
+                        path.display(),
+                        err
+                    );
+                }
             }
             Err(err) => {
                 return println_err!("failed to create file at '{}': {}", path.display(), err);

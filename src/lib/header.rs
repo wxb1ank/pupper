@@ -22,31 +22,31 @@ impl TryFrom<&[u8]> for Header {
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         // Metadata.
-        let meta: Metadata = data.get(..Metadata::SIZE)
+        let meta: Metadata = data
+            .get(..Metadata::SIZE)
             .ok_or(Self::Error::Undersized)
-            .and_then(|x| {
-                <&[u8; Metadata::SIZE]>::try_from(x)
-                    .unwrap()
-                    .try_into()
-            })?;
+            .and_then(|x| <&[u8; Metadata::SIZE]>::try_from(x).unwrap().try_into())?;
         let data = &data[Metadata::SIZE..];
 
         // Segment table.
         let seg_table_size = (meta.seg_count as usize) * seg::Entry::SIZE;
-        let seg_table = data.get(..seg_table_size)
+        let seg_table = data
+            .get(..seg_table_size)
             .ok_or(Self::Error::Undersized)
             .and_then(|x| x.try_into())?;
         let data = &data[seg_table_size..];
 
         // Digest table.
         let digest_table_size = (meta.seg_count as usize) * digest::Entry::SIZE;
-        let digest_table = data.get(..digest_table_size)
+        let digest_table = data
+            .get(..digest_table_size)
             .ok_or(Self::Error::Undersized)
             .and_then(|x| x.try_into())?;
         let data = &data[digest_table_size..];
 
         // Header digest.
-        let header_digest = data.get(..Digest::SIZE)
+        let header_digest = data
+            .get(..Digest::SIZE)
             .ok_or(Self::Error::Undersized)
             .map(|x| <[u8; Digest::SIZE]>::try_from(x).unwrap())?;
         let header_digest = Digest(header_digest);
@@ -60,9 +60,16 @@ impl TryFrom<&[u8]> for Header {
     }
 }
 
-pub trait LoadableRegion<'a>: Region + TryFrom<&'a [u8; Self::SIZE], Error = Error>
-where
-    [(); Self::SIZE]: Sized
-{
+impl From<&Header> for Vec<u8> {
+    fn from(header: &Header) -> Self {
+        let mut data = Vec::new();
 
+        data
+    }
+}
+
+pub trait LoadableRegion<'a>: Region + TryFrom<&'a [u8; Self::SIZE], Error = Error> + Copy
+where
+    [u8; Self::SIZE]: Sized + From<Self>,
+{
 }

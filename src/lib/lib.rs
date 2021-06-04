@@ -7,12 +7,15 @@ use std::convert::{TryFrom, TryInto as _};
 /// A PS3 [PUP] (Playstation Update Package).
 ///
 /// [PUP]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug, Default, Hash)]
 pub struct Pup {
+    /// The segments, or files, contained in the PUP.
     pub segments: Vec<Segment>,
 
-    pkg_version: u64,
-    img_version: u64,
+    /// The [image version] of the PUP.
+    ///
+    /// [image version]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Header
+    pub image_version: u64,
 }
 
 impl TryFrom<&[u8]> for Pup {
@@ -21,18 +24,17 @@ impl TryFrom<&[u8]> for Pup {
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
         let header: header::Header = data.try_into()?;
 
-        // A 'raw' PUP is a direct representation of the underlying file format. As a high-level
-        // API, we want to expose something less confusing and error-prone to our clients.
-
         // First (and most importantly), we generate segments, drawing from three separate
         // locations: the segment table, the digest table, and the actual data.
-        let segments = header.seg_table
+        let segments = header
+            .seg_table
             .iter()
             .enumerate()
             .flat_map(|(i, entry)| {
                 let i = i as u64;
 
-                let digest = header.digest_table
+                let digest = header
+                    .digest_table
                     .iter()
                     .find(|x| x.seg_index == i)
                     .ok_or(Self::Error::MissingDigest(i))
@@ -63,27 +65,24 @@ impl TryFrom<&[u8]> for Pup {
         // Next, we copy over metadata that aren't inherently represented in the segments.
         Ok(Self {
             segments,
-            pkg_version: header.meta.pkg_version,
-            img_version: header.meta.img_version,
+            image_version: header.meta.img_version,
         })
     }
 }
 
-impl Pup {
-    /// The [package version], which identifies the internal file format of this PUP.
-    ///
-    /// [package version]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Header
-    #[must_use]
-    pub const fn package_version(&self) -> u64 {
-        self.pkg_version
-    }
+impl From<&Pup> for Vec<u8> {
+    fn from(pup: &Pup) -> Self {
+        let mut data = Vec::new();
 
-    /// The [image version].
-    ///
-    /// [image version]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Header
+        data
+    }
+}
+
+impl Pup {
+    /// Allocates an empty [`Pup`].
     #[must_use]
-    pub const fn image_version(&self) -> u64 {
-        self.img_version
+    pub fn new() -> Self {
+        Self::default()
     }
 }
 
@@ -155,9 +154,9 @@ impl SegmentId {
     }
 }
 
-/// The kind, or [algorithm], of a [`Segment`] signature.
+/// The [kind] of a [`Segment`] signature.
 ///
-/// [algorithm]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Segment_Table
+/// [kind]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Segment_Table
 #[derive(Clone, Copy, Debug, Hash)]
 pub enum SignatureKind {
     /// The segment is signed with HMAC-SHA1.
