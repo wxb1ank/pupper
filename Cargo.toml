@@ -1,0 +1,17 @@
+[package]
+name = "pupper"
+version = "0.1.0"
+authors = ["wxblank <wxblank@gmail.com>"]
+edition = "2018"
+description = "A PS3 PUP utility"
+readme = true
+repository = "https://github.com/wxb1ank/pupper"
+license = "MIT"
+keywords = ["ps3", "pup"]
+categories = ["command-line-utilities", "parsing"]
+
+[lib]
+path = "src/lib/lib.rs"
+
+[dependencies]
+yansi = "0.5.0"
