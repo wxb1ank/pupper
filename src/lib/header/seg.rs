@@ -1,17 +1,20 @@
-use super::LoadableRegion;
-use crate::{Region, SegmentId, SignatureKind};
+use crate::{Pup, Region, SegmentId, SignatureKind};
 
 use std::convert::{TryFrom, TryInto as _};
 
-#[derive(Clone, Copy)]
+impl From<&Pup> for super::Table<Entry> {
+    fn from(pup: &Pup) -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Clone, Copy, Default)]
 pub struct Entry {
     pub id: SegmentId,
     pub offset: u64,
     pub size: u64,
     pub sig_kind: SignatureKind,
 }
-
-impl LoadableRegion<'_> for Entry {}
 
 impl TryFrom<&[u8; Self::SIZE]> for Entry {
     type Error = crate::Error;

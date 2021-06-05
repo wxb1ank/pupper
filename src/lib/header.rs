@@ -6,15 +6,35 @@ mod table;
 use meta::Metadata;
 use table::Table;
 
-use crate::{Digest, Error, Region};
+use crate::{Digest, Error, Pup, Region};
 
 use std::convert::{TryFrom, TryInto as _};
 
+#[derive(Clone, Default)]
 pub struct Header {
     pub meta: Metadata,
     pub seg_table: Table<seg::Entry>,
     pub digest_table: Table<digest::Entry>,
-    pub header_digest: Digest,
+    header_digest: Digest,
+}
+
+impl Header {
+    pub fn new(
+        meta: Metadata,
+        seg_table: Table<seg::Entry>,
+        digest_table: Table<digest::Entry>
+    ) -> Self {
+        Self {
+            meta,
+            seg_table,
+            digest_table,
+            header_digest: Digest::default(),
+        }
+    }
+
+    pub fn header_digest(&self) -> &Digest {
+        &self.header_digest
+    }
 }
 
 impl TryFrom<&[u8]> for Header {
@@ -60,16 +80,24 @@ impl TryFrom<&[u8]> for Header {
     }
 }
 
-impl From<&Header> for Vec<u8> {
-    fn from(header: &Header) -> Self {
-        let mut data = Vec::new();
-
-        data
+impl From<&Pup> for Header {
+    fn from(pup: &Pup) -> Self {
+        Self::new(pup.into(), pup.into(), pup.into())
     }
 }
 
-pub trait LoadableRegion<'a>: Region + TryFrom<&'a [u8; Self::SIZE], Error = Error> + Copy
-where
-    [u8; Self::SIZE]: Sized + From<Self>,
-{
+impl From<&Header> for Vec<u8> {
+    fn from(header: &Header) -> Self {
+        let mut data = Self::new();
+
+        data.append(&mut <[u8; Metadata::SIZE]>::from(header.meta).into());
+        data.append(&mut Self::from(&header.seg_table));
+        data.append(&mut Self::from(&header.digest_table));
+        data.append(&mut header.header_digest.0.into());
+
+        // Pad the header to the requested size.
+        data.resize_with(header.meta.header_size as usize, Default::default);
+
+        data
+    }
 }

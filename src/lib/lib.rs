@@ -2,6 +2,8 @@
 
 mod header;
 
+use header::Header;
+
 use std::convert::{TryFrom, TryInto as _};
 
 /// A PS3 [PUP] (Playstation Update Package).
@@ -22,7 +24,7 @@ impl TryFrom<&[u8]> for Pup {
     type Error = Error;
 
     fn try_from(data: &[u8]) -> Result<Self, Self::Error> {
-        let header: header::Header = data.try_into()?;
+        let header: Header = data.try_into()?;
 
         // First (and most importantly), we generate segments, drawing from three separate
         // locations: the segment table, the digest table, and the actual data.
@@ -72,9 +74,7 @@ impl TryFrom<&[u8]> for Pup {
 
 impl From<&Pup> for Vec<u8> {
     fn from(pup: &Pup) -> Self {
-        let mut data = Vec::new();
-
-        data
+        Self::from(&Header::from(pup))
     }
 }
 
@@ -116,19 +116,35 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Clone, Debug, Hash)]
+#[derive(Clone, Debug, Default, Hash)]
 pub struct Segment {
     pub id: SegmentId,
     pub sig_kind: SignatureKind,
-    pub digest: Digest,
     pub data: Vec<u8>,
+    digest: Digest,
+}
+
+impl Segment {
+    #[must_use]
+    pub fn new(id: SegmentId, sig_kind: SignatureKind, data: Vec<u8>) -> Self {
+        Self {
+            id,
+            sig_kind,
+            data,
+            digest: Digest::default(),
+        }
+    }
+
+    pub fn digest(&self) -> &Digest {
+        &self.digest
+    }
 }
 
 /// The ID of a [`Segment`]. Can *usually* be [translated to a file name].
 ///
 /// [translated to a file name]:
 ///     https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Segment_Entry_IDs
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug, Default, Hash)]
 pub struct SegmentId(pub u64);
 
 impl SegmentId {
@@ -165,6 +181,12 @@ pub enum SignatureKind {
     HmacSha256,
 }
 
+impl Default for SignatureKind {
+    fn default() -> Self {
+        Self::HmacSha1
+    }
+}
+
 impl std::convert::TryFrom<u32> for SignatureKind {
     type Error = crate::Error;
 
@@ -198,7 +220,7 @@ impl std::fmt::Display for SignatureKind {
 /// The [hash digest] of a [`Segment`]. Always HMAC-SHA1.
 ///
 /// [hash digest]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Digest_Table
-#[derive(Clone, Copy, Debug, Hash)]
+#[derive(Clone, Copy, Debug, Default, Hash)]
 pub struct Digest(pub [u8; Self::SIZE]);
 
 impl Region for Digest {
@@ -211,12 +233,12 @@ pub struct Magic(pub [u8; Self::SIZE]);
 
 impl Default for Magic {
     fn default() -> Self {
-        Self(*b"SCEUF\0\0")
+        Self(*b"SCEUF\0\0\0")
     }
 }
 
 impl Region for Magic {
-    const SIZE: usize = 0x07;
+    const SIZE: usize = 0x08;
 }
 
 pub trait Region {

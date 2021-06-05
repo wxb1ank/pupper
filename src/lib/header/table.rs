@@ -1,13 +1,13 @@
 use std::convert::{TryFrom, TryInto as _};
 
-use super::LoadableRegion;
+use crate::Region;
 
+#[derive(Clone, Default)]
 pub struct Table<T>(Vec<T>);
 
-impl<'a, T> TryFrom<&'a [u8]> for Table<T>
+impl<'a, T: Region + TryFrom<&'a [u8; T::SIZE]>> TryFrom<&'a [u8]> for Table<T>
 where
-    T: super::LoadableRegion<'a>,
-    [u8; T::SIZE]: Sized + From<T>,
+    [(); T::SIZE]: Sized
 {
     type Error = crate::Error;
 
@@ -21,10 +21,9 @@ where
     }
 }
 
-impl<'a, T: LoadableRegion<'a>> From<&Table<T>> for Vec<u8>
+impl<'a, T: Region + Copy> From<&Table<T>> for Vec<u8>
 where
-    T: super::LoadableRegion<'a>,
-    [u8; T::SIZE]: Sized + From<T>,
+    [u8; T::SIZE]: From<T>
 {
     fn from(table: &Table<T>) -> Self {
         table
