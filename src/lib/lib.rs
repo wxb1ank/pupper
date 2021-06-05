@@ -135,6 +135,7 @@ impl Segment {
         }
     }
 
+    #[must_use]
     pub fn digest(&self) -> &Digest {
         &self.digest
     }
@@ -147,28 +148,44 @@ impl Segment {
 #[derive(Clone, Copy, Debug, Default, Hash)]
 pub struct SegmentId(pub u64);
 
-impl SegmentId {
-    /// Translates this ID to a known file name.
-    #[must_use]
-    pub fn file_name(self) -> Option<String> {
-        match self.0 {
-            0x100 => Some("version.txt"),
-            0x101 => Some("license.xml"),
-            0x102 => Some("promo_flags.txt"),
-            0x103 => Some("update_flags.txt"),
-            0x104 => Some("patch_build.txt"),
-            0x200 => Some("ps3swu.self"),
-            0x201 => Some("vsh.tar"),
-            0x202 => Some("dots.txt"),
-            0x203 => Some("patch_data.pkg"),
-            0x300 => Some("update_files.tar"),
-            0x501 => Some("spkg_hdr.tar"),
-            0x601 => Some("ps3swu2.self"),
-            _ => None,
-        }
-        .map(String::from)
+impl TryFrom<SegmentId> for &'static str {
+    type Error = String;
+
+    fn try_from(id: SegmentId) -> Result<Self, Self::Error> {
+        SEGMENT_ID_MAP
+            .iter()
+            .find(|(value, _)| *value == id.0)
+            .map(|(_, file_name)| *file_name)
+            .ok_or_else(|| format!("segment ID '{}' has no corresponding file name", id.0))
     }
 }
+
+impl TryFrom<&str> for SegmentId {
+    type Error = String;
+
+    fn try_from(file_name: &str) -> Result<Self, Self::Error> {
+        SEGMENT_ID_MAP
+            .iter()
+            .find(|(_, value)| *value == file_name)
+            .map(|(id, _)| Self(*id))
+            .ok_or_else(|| format!("file name '{}' has no corresponding segment ID", file_name))
+    }
+}
+
+static SEGMENT_ID_MAP: [(u64, &str); 12] = [
+    (0x100, "version.txt"),
+    (0x101, "license.xml"),
+    (0x102, "promo_flags.txt"),
+    (0x103, "update_flags.txt"),
+    (0x104, "patch_build.txt"),
+    (0x200, "ps3swu.self"),
+    (0x201, "vsh.tar"),
+    (0x202, "dots.txt"),
+    (0x203, "patch_data.pkg"),
+    (0x300, "update_files.tar"),
+    (0x501, "spkg_hdr.tar"),
+    (0x601, "ps3swu2.self"),
+];
 
 /// The [kind] of a [`Segment`] signature.
 ///
