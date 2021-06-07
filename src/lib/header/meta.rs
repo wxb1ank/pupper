@@ -1,4 +1,4 @@
-use crate::{Digest, Magic, Pup, Region};
+use crate::{FixedSize, Magic, Pup};
 
 use std::convert::{TryFrom, TryInto as _};
 
@@ -43,27 +43,11 @@ impl TryFrom<&[u8; Self::SIZE]> for Metadata {
 
 impl From<&Pup> for Metadata {
     fn from(pup: &Pup) -> Self {
-        // With just the segment count, we can calculate exactly what the full header size should
-        // be.
-        let mut header_size = Self::SIZE;
-        header_size += pup.segments.len() * super::seg::Entry::SIZE;
-        header_size += pup.segments.len() * super::digest::Entry::SIZE;
-        header_size += Digest::SIZE;
-        header_size += header_size % 0x10; // Round up to a multiple of 0x10.
-        let header_size = header_size as u64;
-
-         // Note: The usage of Iterator::sum() here may panic in case of an overflow.
-        let data_size = pup.segments
-            .iter()
-            .map(|x| x.data.len())
-            .sum::<usize>();
-        let data_size = data_size as u64;
-
         Self {
             img_version: pup.image_version,
             seg_count: pup.segments.len() as u64,
-            header_size,
-            data_size,
+            header_size: pup.header_size() as u64,
+            data_size: pup.data_size() as u64,
         }
     }
 }
@@ -83,7 +67,7 @@ impl From<Metadata> for [u8; Metadata::SIZE] {
     }
 }
 
-impl Region for Metadata {
+impl FixedSize for Metadata {
     const SIZE: usize = 0x30;
 }
 

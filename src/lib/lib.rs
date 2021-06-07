@@ -1,22 +1,94 @@
+//! A Sony PlayStation 3 PUP (PlayStation Update Package) implementation.
+//!
+//! # Overview
+//!
+//! The PS3 receives software updates in a file format called 'PUP'. These packages are essentially
+//!'flat' file systems: they contain individual files, or 'segments', but lack any hierarchical
+//! structure.
+//!
+//! This crate facilitates the creation and (de)serialization of PUPs.
+//!
+//! # Examples
+//!
+//! Let's first create a new [`Pup`] and assign it an image version:
+//!
+//! ```
+//! use pupper::{Pup, Segment};
+//!
+//! let segments = Vec::<Segment>::new();
+//! let image_version: u64 = 0xAAAA_BBBB;
+//!
+//! let pup = Pup::new(segments.clone(), image_version);
+//!
+//! assert_eq!(segments, pup.segments);
+//! assert_eq!(image_version, pup.image_version);
+//! ```
+//!
+//! As you can see, [`Pup`] is, for most intents and purposes, a [POD] type. [`Pup::image_version`]
+//! is a public [`u64`], and [`Pup::segments`] is transparently a [`Vec<Segment>`].
+//!
+//! Let's now create a segment and add it to the [`Pup`] we previously created:
+//!
+//! ```no_run
+//! use pupper::{Segment, SegmentId, SignatureKind};
+//! #
+//! # let mut pup = pupper::Pup::default(); // We can cheat a little here, LOL.
+//!
+//! let id = SegmentId(0x100);
+//! let sig_kind = SignatureKind::HmacSha1;
+//! let data = std::fs::read("foo.txt").unwrap();
+//!
+//! let segment = Segment::new(id, sig_kind, data.clone());
+//!
+//! // Segment is (mostly) a POD type, too!
+//! assert_eq!(id, segment.id);
+//! assert_eq!(sig_kind, segment.sig_kind);
+//! assert_eq!(data, segment.data);
+//!
+//! pup.segments.push(segment.clone());
+//! assert_eq!(segment, pup.segments[0]);
+//! ```
+//!
+//! Finally, let's serialize the entire [`Pup`]. Afterwards, we'll deserialize it to confirm the
+//! conversions were lossless:
+//!
+//! ```
+//! use pupper::Pup;
+//! use std::convert::TryFrom as _;
+//! #
+//! # let pup = Pup::default();
+//!
+//! // Serialize the PUP.
+//! let data = Vec::<u8>::from(&pup);
+//!
+//! // Deserialize the PUP.
+//! assert_eq!(Ok(pup), Pup::try_from(data.as_slice()));
+//! ```
+//!
+//! [POD]: https://en.wikipedia.org/wiki/Passive_data_structure
+
+// TODO: Remove these when they are stabilized OR suitable alternatives are found.
 #![feature(const_evaluatable_checked, const_generics)]
 
 mod header;
 
 use header::Header;
 
-use std::convert::{TryFrom, TryInto as _};
+use std::{
+    convert::{TryFrom, TryInto as _},
+    fmt::{self, Display, Formatter},
+};
 
-/// A PS3 [PUP] (Playstation Update Package).
-///
-/// [PUP]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)
-#[derive(Clone, Debug, Default, Hash)]
+/// A PS3 PUP (PlayStation Update Package).
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Pup {
-    /// The segments, or files, contained in the PUP.
+    /// The segments, or files, contained in this PUP.
     pub segments: Vec<Segment>,
 
-    /// The [image version] of the PUP.
+    /// The image version of this PUP.
     ///
-    /// [image version]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Header
+    /// Presumably, this field identifies the revision of this PUP's contents. I don't work for
+    /// Sony, though. ¯\_(ツ)_/¯
     pub image_version: u64,
 }
 
@@ -43,8 +115,7 @@ impl TryFrom<&[u8]> for Pup {
                     .map(|x| x.digest)?;
 
                 let data = {
-                    // TODO: Should non-wrapping addition be used here? Maybe it should even be
-                    // saturating?
+                    // [may_panic(Add)]
                     let start = entry.offset as usize;
                     let end = start + (entry.size as usize);
 
@@ -74,32 +145,85 @@ impl TryFrom<&[u8]> for Pup {
 
 impl From<&Pup> for Vec<u8> {
     fn from(pup: &Pup) -> Self {
-        Self::from(&Header::from(pup))
+        // Create the header first to generate the segment table and location information.
+        let header = Header::from(pup);
+
+        let header_size = header.meta.header_size as usize;
+        let data_size = header.meta.data_size as usize;
+
+        // [may_panic(Add)]
+        let mut data = Self::from(&header);
+        data.resize_with(header_size + data_size, Default::default);
+
+        // Fill in data according to the offset and size specified by the segment entries.
+        // Note: This will crash and burn if Header::from() gets things wrong...
+        for (i, entry) in header.seg_table.iter().enumerate() {
+            // [may_panic(Add)]
+            let start = entry.offset as usize;
+            let end = start + (entry.size as usize);
+
+            data[start..end].copy_from_slice(&pup.segments[i].data);
+        }
+
+        data
     }
 }
 
 impl Pup {
-    /// Allocates an empty [`Pup`].
     #[must_use]
-    pub fn new() -> Self {
-        Self::default()
+    pub fn new(segments: Vec<Segment>, image_version: u64) -> Self {
+        Self {
+            segments,
+            image_version,
+        }
+    }
+
+    // The following methods exist on Pup because, without them, Metadata::from() would need to be
+    // called every time header or data size must be known.
+
+    fn header_size(&self) -> usize {
+        // With just the segment count, we can calculate exactly what the full header size should
+        // be.
+
+        let mut header_size: usize;
+
+        // [may_panic(Add)]
+        header_size = header::meta::Metadata::SIZE;
+        header_size += self.segments.len() * header::seg::Entry::SIZE;
+        header_size += self.segments.len() * header::digest::Entry::SIZE;
+        header_size += Digest::SIZE;
+        header_size += header_size % 0x10; // Round up to a multiple of 0x10.
+
+        header_size
+    }
+
+    fn data_size(&self) -> usize {
+        // [may_panic(Iterator::sum)]
+        self.segments.iter().map(|x| x.data.len()).sum::<usize>()
     }
 }
 
-#[derive(Debug)]
+/// An erroneous result returned by [`Pup::try_from`].
+#[derive(Debug, Eq, PartialEq)]
 pub enum Error {
+    /// The input data is too short.
     Undersized,
+    /// The file magic is invalid.
     InvalidMagic(Magic),
+    /// The package version is unsupported.
     UnsupportedPackageVersion(u64),
+    /// A signature kind field has an invalid value.
     InvalidSignatureKind(u32),
+    /// A segment at a specific index has no corresponding digest.
     MissingDigest(u64),
+    /// A segment at a specific index has no corresponding data.
     MissingData(u64),
 }
 
-impl std::fmt::Display for Error {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
-            Self::Undersized => write!(f, "PUP is too small"),
+            Self::Undersized => write!(f, "input data is too short"),
             Self::InvalidMagic(magic) => {
                 let magic = std::str::from_utf8(&magic.0).unwrap_or_default();
                 write!(f, "magic '{}' is invalid", magic)
@@ -116,10 +240,14 @@ impl std::fmt::Display for Error {
     }
 }
 
-#[derive(Clone, Debug, Default, Hash)]
+/// An individual file contained in a [`Pup`].
+#[derive(Clone, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Segment {
+    /// The ID of this segment.
     pub id: SegmentId,
+    /// The kind of signature this segment has.
     pub sig_kind: SignatureKind,
+    /// The actual data this segment represents.
     pub data: Vec<u8>,
     digest: Digest,
 }
@@ -145,7 +273,7 @@ impl Segment {
 ///
 /// [translated to a file name]:
 ///     https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Segment_Entry_IDs
-#[derive(Clone, Copy, Debug, Default, Hash)]
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct SegmentId(pub u64);
 
 impl TryFrom<SegmentId> for &'static str {
@@ -172,6 +300,12 @@ impl TryFrom<&str> for SegmentId {
     }
 }
 
+// This u64 <=> &str map exists because strings (e.g., these file names) would be prone to
+// accidental modification if repeated verbatim in the above two TryFrom implementations.
+//
+// This isn't a HashMap because...
+//   a. I don't think static HashMaps are possible?
+//   b. There's only 12 KV pairs.
 static SEGMENT_ID_MAP: [(u64, &str); 12] = [
     (0x100, "version.txt"),
     (0x101, "license.xml"),
@@ -187,14 +321,12 @@ static SEGMENT_ID_MAP: [(u64, &str); 12] = [
     (0x601, "ps3swu2.self"),
 ];
 
-/// The [kind] of a [`Segment`] signature.
-///
-/// [kind]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Segment_Table
-#[derive(Clone, Copy, Debug, Hash)]
+/// The kind of cryptographic signature a [`Segment`] has.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum SignatureKind {
-    /// The segment is signed with HMAC-SHA1.
+    /// The segment is signed with Sony's HMAC-SHA1.
     HmacSha1,
-    /// The segment is signed with HMAC-SHA256.
+    /// The segment is signed with Sony's HMAC-SHA256.
     HmacSha256,
 }
 
@@ -204,7 +336,7 @@ impl Default for SignatureKind {
     }
 }
 
-impl std::convert::TryFrom<u32> for SignatureKind {
+impl TryFrom<u32> for SignatureKind {
     type Error = crate::Error;
 
     fn try_from(value: u32) -> Result<Self, Self::Error> {
@@ -225,8 +357,8 @@ impl From<SignatureKind> for u32 {
     }
 }
 
-impl std::fmt::Display for SignatureKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+impl Display for SignatureKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Self::HmacSha1 => write!(f, "HMAC-SHA1"),
             Self::HmacSha256 => write!(f, "HMAC-SHA256"),
@@ -234,18 +366,53 @@ impl std::fmt::Display for SignatureKind {
     }
 }
 
-/// The [hash digest] of a [`Segment`]. Always HMAC-SHA1.
+/// The hash digest of a [`Segment`]. Always signed with [`SignatureKind::HmacSha1`].
 ///
-/// [hash digest]: https://www.psdevwiki.com/ps3/Playstation_Update_Package_(PUP)#Digest_Table
-#[derive(Clone, Copy, Debug, Default, Hash)]
+/// # Examples
+///
+/// [`Self::fmt`] formats this digest as a lowercase hexadecimal string:
+///
+/// ```
+/// let mut digest = pupper::Digest::default();
+/// for (i, byte) in digest.0.iter_mut().enumerate() {
+///     let i = (i as u8) & 0b1111;
+///
+///     // Lo nibble
+///     *byte = i;
+///     // Hi nibble
+///     *byte |= (i << 4);
+/// }
+///
+/// let expected = "00112233445566778899aabbccddeeff00112233";
+/// assert_eq!(expected, format!("{}", digest));
+/// ```
+#[derive(Clone, Copy, Debug, Default, Eq, Hash, PartialEq)]
 pub struct Digest(pub [u8; Self::SIZE]);
 
-impl Region for Digest {
+impl Display for Digest {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        let digest: String = self.0.iter().map(|x| format!("{:02x}", *x)).collect();
+
+        write!(f, "{}", digest)
+    }
+}
+
+impl FixedSize for Digest {
     const SIZE: usize = 0x14;
 }
 
-/// The file magic of a PUP.
-#[derive(Clone, Copy, Debug, Hash, PartialEq)]
+/// The file magic of a PUP. Always `SCEUF\0\0\0`.
+///
+/// This type exists solely for being the 'return value' of [`Error::InvalidMagic`].
+///
+/// # Examples
+///
+/// [`Self::default`] will always return the aforementioned value:
+///
+/// ```
+/// assert_eq!(*b"SCEUF\0\0\0", pupper::Magic::default().0);
+/// ```
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Magic(pub [u8; Self::SIZE]);
 
 impl Default for Magic {
@@ -254,10 +421,14 @@ impl Default for Magic {
     }
 }
 
-impl Region for Magic {
+impl FixedSize for Magic {
     const SIZE: usize = 0x08;
 }
 
-pub trait Region {
+/// Has a fixed, or constant, size.
+///
+/// This trait exists to reduce redundancy when writing newtypes of arrays (e.g., [`Digest`],
+/// [`Magic`]).
+pub trait FixedSize {
     const SIZE: usize;
 }

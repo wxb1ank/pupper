@@ -1,13 +1,13 @@
 use std::convert::{TryFrom, TryInto as _};
 
-use crate::Region;
+use crate::FixedSize;
 
 #[derive(Clone, Default)]
-pub struct Table<T>(Vec<T>);
+pub struct Table<T>(pub Vec<T>);
 
-impl<'a, T: Region + TryFrom<&'a [u8; T::SIZE]>> TryFrom<&'a [u8]> for Table<T>
+impl<'a, T: FixedSize + TryFrom<&'a [u8; T::SIZE]>> TryFrom<&'a [u8]> for Table<T>
 where
-    [(); T::SIZE]: Sized
+    [(); T::SIZE]: Sized,
 {
     type Error = crate::Error;
 
@@ -21,9 +21,9 @@ where
     }
 }
 
-impl<'a, T: Region + Copy> From<&Table<T>> for Vec<u8>
+impl<'a, T: FixedSize + Copy> From<&Table<T>> for Vec<u8>
 where
-    [u8; T::SIZE]: From<T>
+    [u8; T::SIZE]: From<T>,
 {
     fn from(table: &Table<T>) -> Self {
         table

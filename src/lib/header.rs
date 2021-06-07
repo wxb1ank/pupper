@@ -1,12 +1,12 @@
-mod digest;
-mod meta;
-mod seg;
+pub(crate) mod digest;
+pub(crate) mod meta;
+pub(crate) mod seg;
 mod table;
 
 use meta::Metadata;
 use table::Table;
 
-use crate::{Digest, Error, Pup, Region};
+use crate::{Digest, Error, FixedSize, Pup};
 
 use std::convert::{TryFrom, TryInto as _};
 
@@ -22,7 +22,7 @@ impl Header {
     pub fn new(
         meta: Metadata,
         seg_table: Table<seg::Entry>,
-        digest_table: Table<digest::Entry>
+        digest_table: Table<digest::Entry>,
     ) -> Self {
         Self {
             meta,

@@ -2,8 +2,7 @@ use pupper::Pup;
 
 use std::convert::TryFrom as _;
 
-pub fn execute(args: &clap::ArgMatches) -> Result<(), String> {
-    let path = std::path::Path::new(args.value_of("pup").unwrap());
+pub fn execute(path: &std::path::Path) -> Result<(), String> {
     super::read_pup_from_path(path).map(|ref pup| print_pup(pup))
 }
 
@@ -17,13 +16,6 @@ fn print_pup(pup: &Pup) {
 
         println!("  [{}]", name);
         println!("    Size: {} bytes", seg.data.len());
-
-        let digest: String = seg.digest()
-            .0
-            .iter()
-            .map(|x| format!("{:02x}", x))
-            .collect();
-
-        println!("    Hash digest: {} ({})", digest, seg.sig_kind);
+        println!("    Hash digest: {} ({})", seg.digest(), seg.sig_kind);
     }
 }

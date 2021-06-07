@@ -1,10 +1,32 @@
-use crate::{Pup, Region, SegmentId, SignatureKind};
+use crate::{FixedSize, Pup, SegmentId, SignatureKind};
 
 use std::convert::{TryFrom, TryInto as _};
 
 impl From<&Pup> for super::Table<Entry> {
     fn from(pup: &Pup) -> Self {
-        Self::default()
+        // This is a usize (and not a u64) so that overflow is less likely. In practice, u64 is
+        // the widest scalar type, so this doesn't really matter.
+        let mut offset = pup.header_size();
+
+        let entries = pup
+            .segments
+            .iter()
+            .map(|seg| {
+                let entry = Entry {
+                    id: seg.id,
+                    offset: offset as u64,
+                    size: seg.data.len() as u64,
+                    sig_kind: seg.sig_kind,
+                };
+
+                // [may_panic(Add)]
+                offset += entry.size as usize;
+
+                entry
+            })
+            .collect();
+
+        Self(entries)
     }
 }
 
@@ -51,6 +73,6 @@ impl From<Entry> for [u8; Entry::SIZE] {
     }
 }
 
-impl Region for Entry {
+impl FixedSize for Entry {
     const SIZE: usize = 0x20;
 }

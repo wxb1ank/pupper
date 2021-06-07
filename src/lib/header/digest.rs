@@ -1,10 +1,20 @@
-use crate::{Digest, Pup, Region};
+use crate::{Digest, FixedSize, Pup};
 
 use std::convert::{TryFrom, TryInto as _};
 
 impl From<&Pup> for super::Table<Entry> {
     fn from(pup: &Pup) -> Self {
-        Self::default()
+        let entries = pup
+            .segments
+            .iter()
+            .enumerate()
+            .map(|(i, seg)| Entry {
+                seg_index: i as u64,
+                digest: *seg.digest(),
+            })
+            .collect();
+
+        Self(entries)
     }
 }
 
@@ -36,6 +46,6 @@ impl From<Entry> for [u8; Entry::SIZE] {
     }
 }
 
-impl Region for Entry {
+impl FixedSize for Entry {
     const SIZE: usize = 0x20;
 }
