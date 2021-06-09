@@ -43,8 +43,8 @@ fn main() {
     let path = std::path::Path::new(args.value_of("pup").unwrap());
 
     let result = match args.subcommand() {
-        ("print", Some(_)) => print::execute(path),
         ("create", Some(args)) => create::execute(path, args),
+        ("print", Some(_)) => print::execute(path),
         ("segment", Some(args)) => seg::execute(path, args),
         _ => Ok(()),
     };

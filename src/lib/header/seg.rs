@@ -1,4 +1,4 @@
-use crate::{FixedSize, Pup, SegmentId, SignatureKind};
+use crate::{FixedSize, Pup, SegmentId};
 
 use std::convert::{TryFrom, TryInto as _};
 
@@ -16,7 +16,6 @@ impl From<&Pup> for super::Table<Entry> {
                     id: seg.id,
                     offset: offset as u64,
                     size: seg.data.len() as u64,
-                    sig_kind: seg.sig_kind,
                 };
 
                 // [may_panic(Add)]
@@ -35,7 +34,6 @@ pub struct Entry {
     pub id: SegmentId,
     pub offset: u64,
     pub size: u64,
-    pub sig_kind: SignatureKind,
 }
 
 impl TryFrom<&[u8; Self::SIZE]> for Entry {
@@ -49,14 +47,13 @@ impl TryFrom<&[u8; Self::SIZE]> for Entry {
         let id = SegmentId(u64::from_be_bytes(data[0x00..0x08].try_into().unwrap()));
         let offset = u64::from_be_bytes(data[0x08..0x10].try_into().unwrap());
         let size = u64::from_be_bytes(data[0x10..0x18].try_into().unwrap());
-        let sig_kind = u32::from_be_bytes(data[0x18..0x1C].try_into().unwrap()).try_into()?;
+        let sig_kind = u32::from_be_bytes(data[0x18..0x1C].try_into().unwrap());
 
-        Ok(Self {
-            id,
-            offset,
-            size,
-            sig_kind,
-        })
+        if sig_kind != Self::SIGNATURE_KIND {
+            return Err(Self::Error::InvalidSignatureKind(sig_kind));
+        }
+
+        Ok(Self { id, offset, size })
     }
 }
 
@@ -67,10 +64,14 @@ impl From<Entry> for [u8; Entry::SIZE] {
         data[0x00..0x08].copy_from_slice(&entry.id.0.to_be_bytes());
         data[0x08..0x10].copy_from_slice(&entry.offset.to_be_bytes());
         data[0x10..0x18].copy_from_slice(&entry.size.to_be_bytes());
-        data[0x18..0x1C].copy_from_slice(&u32::from(entry.sig_kind).to_be_bytes());
+        data[0x18..0x1C].copy_from_slice(&Entry::SIGNATURE_KIND.to_be_bytes());
 
         data
     }
+}
+
+impl Entry {
+    const SIGNATURE_KIND: u32 = 0;
 }
 
 impl FixedSize for Entry {

@@ -1,4 +1,4 @@
-use pupper::{Segment, SignatureKind};
+use pupper::Segment;
 
 use std::path::Path;
 
@@ -12,7 +12,7 @@ pub fn execute(pup_path: &Path, index: usize, args: &clap::ArgMatches) -> Result
         }
 
         crate::read_data_from_path(seg_path).map(|data| {
-            let seg = Segment::new(id, SignatureKind::default(), data);
+            let seg = Segment::new(id, data);
             pup.segments.insert(index, seg);
         })
     })

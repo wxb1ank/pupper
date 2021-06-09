@@ -7,15 +7,29 @@ pub fn execute(path: &std::path::Path) -> Result<(), String> {
 }
 
 fn print_pup(pup: &Pup) {
-    println!("Image version: {:#x}", pup.image_version);
-    println!("[Segments]");
+    println!("{{");
+    println!("  \"image-version\": {},", pup.image_version);
+    println!("  \"segments\": [");
 
-    for seg in &pup.segments {
-        let name = <&'static str>::try_from(seg.id)
-            .map_or_else(|_| format!("ID: {:#x}", seg.id.0), String::from);
+    for (i, seg) in pup.segments.iter().enumerate() {
+        println!("    {{");
+        println!("      \"id\": {},", seg.id.0);
 
-        println!("  [{}]", name);
-        println!("    Size: {} bytes", seg.data.len());
-        println!("    Hash digest: {} ({})", seg.digest(), seg.sig_kind);
+        let file_name = <&'static str>::try_from(seg.id)
+            .map_or_else(|_| "null".into(), |x| format!("\"{}\"", x));
+        println!("      \"file-name\": {},", file_name);
+
+        println!("      \"size\": {},", seg.data.len());
+        println!("      \"signature\": \"{}\"", seg.signature());
+        print!("    }}");
+
+        if i == (pup.segments.len() - 1) {
+            println!();
+        } else {
+            println!(",");
+        }
     }
+
+    println!("  ]");
+    println!("}}");
 }

@@ -30,19 +30,18 @@
 //! Let's now create a segment and add it to the [`Pup`] we previously created:
 //!
 //! ```no_run
-//! use pupper::{Segment, SegmentId, SignatureKind};
+//! use pupper::SegmentId;
+//! # use pupper::Segment;
 //! #
 //! # let mut pup = pupper::Pup::default(); // We can cheat a little here, LOL.
 //!
 //! let id = SegmentId(0x100);
-//! let sig_kind = SignatureKind::HmacSha1;
 //! let data = std::fs::read("foo.txt").unwrap();
 //!
-//! let segment = Segment::new(id, sig_kind, data.clone());
+//! let segment = Segment::new(id, data.clone());
 //!
 //! // Segment is (mostly) a POD type, too!
 //! assert_eq!(id, segment.id);
-//! assert_eq!(sig_kind, segment.sig_kind);
 //! assert_eq!(data, segment.data);
 //!
 //! pup.segments.push(segment.clone());
@@ -67,7 +66,9 @@
 //!
 //! [POD]: https://en.wikipedia.org/wiki/Passive_data_structure
 
-// TODO: Remove these when they are stabilized OR suitable alternatives are found.
+#![deny(missing_docs)]
+
+// TODO: Remove these after stabilization.
 #![feature(const_evaluatable_checked, const_generics)]
 
 mod header;
@@ -107,12 +108,12 @@ impl TryFrom<&[u8]> for Pup {
             .flat_map(|(i, entry)| {
                 let i = i as u64;
 
-                let digest = header
-                    .digest_table
+                let sig = header
+                    .sig_table
                     .iter()
                     .find(|x| x.seg_index == i)
-                    .ok_or(Self::Error::MissingDigest(i))
-                    .map(|x| x.digest)?;
+                    .ok_or(Self::Error::MissingSignature(i))
+                    .map(|x| x.sig)?;
 
                 let data = {
                     // [may_panic(Add)]
@@ -126,9 +127,8 @@ impl TryFrom<&[u8]> for Pup {
 
                 let seg = Segment {
                     id: entry.id,
-                    sig_kind: entry.sig_kind,
-                    digest,
                     data,
+                    sig,
                 };
 
                 Result::<Segment, Self::Error>::Ok(seg)
@@ -170,6 +170,7 @@ impl From<&Pup> for Vec<u8> {
 }
 
 impl Pup {
+    /// Creates a new [`Pup`].
     #[must_use]
     pub fn new(segments: Vec<Segment>, image_version: u64) -> Self {
         Self {
@@ -190,7 +191,7 @@ impl Pup {
         // [may_panic(Add)]
         header_size = header::meta::Metadata::SIZE;
         header_size += self.segments.len() * header::seg::Entry::SIZE;
-        header_size += self.segments.len() * header::digest::Entry::SIZE;
+        header_size += self.segments.len() * header::sig::Entry::SIZE;
         header_size += Digest::SIZE;
         header_size += header_size % 0x10; // Round up to a multiple of 0x10.
 
@@ -214,8 +215,8 @@ pub enum Error {
     UnsupportedPackageVersion(u64),
     /// A signature kind field has an invalid value.
     InvalidSignatureKind(u32),
-    /// A segment at a specific index has no corresponding digest.
-    MissingDigest(u64),
+    /// A segment at a specific index has no corresponding signature.
+    MissingSignature(u64),
     /// A segment at a specific index has no corresponding data.
     MissingData(u64),
 }
@@ -234,7 +235,7 @@ impl Display for Error {
             Self::InvalidSignatureKind(kind) => {
                 write!(f, "signature kind '{}' is invalid", kind)
             }
-            Self::MissingDigest(i) => write!(f, "digest for segment {} is missing", i),
+            Self::MissingSignature(i) => write!(f, "signature for segment {} is missing", i),
             Self::MissingData(i) => write!(f, "data for segment {} is missing", i),
         }
     }
@@ -245,28 +246,44 @@ impl Display for Error {
 pub struct Segment {
     /// The ID of this segment.
     pub id: SegmentId,
-    /// The kind of signature this segment has.
-    pub sig_kind: SignatureKind,
     /// The actual data this segment represents.
     pub data: Vec<u8>,
-    digest: Digest,
+
+    sig: Digest,
 }
 
 impl Segment {
+    /// Creates a new [`Segment`].
     #[must_use]
-    pub fn new(id: SegmentId, sig_kind: SignatureKind, data: Vec<u8>) -> Self {
+    pub fn new(id: SegmentId, data: Vec<u8>) -> Self {
         Self {
             id,
-            sig_kind,
             data,
-            digest: Digest::default(),
+            sig: Digest::default(),
         }
     }
 
-    #[must_use]
-    pub fn digest(&self) -> &Digest {
-        &self.digest
+    /// The signed hash digest of this segment's data.
+    pub fn signature(&self) -> &Digest {
+        &self.sig
     }
+
+    /// Updates the result of [`Self::signature`].
+    pub fn sign(&mut self) {
+        // Unwrapping is safe because an error is only returned when the key is an invalid length
+        // (HMAC_KEY is a fixed 0x40 bytes).
+        HMAC_KEY.with(|_| {
+            todo!();
+        });
+    }
+}
+
+thread_local! {
+    /// The PUP HMAC key.
+    ///
+    /// It is of questionable legality to provide this key. Therefore, for accurate
+    /// signature-related information, clients should overwrite this constant with the real key.
+    pub static HMAC_KEY: [u8; 0x40] = [0; 0x40];
 }
 
 /// The ID of a [`Segment`]. Can *usually* be [translated to a file name].
@@ -321,56 +338,11 @@ static SEGMENT_ID_MAP: [(u64, &str); 12] = [
     (0x601, "ps3swu2.self"),
 ];
 
-/// The kind of cryptographic signature a [`Segment`] has.
-#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
-pub enum SignatureKind {
-    /// The segment is signed with Sony's HMAC-SHA1.
-    HmacSha1,
-    /// The segment is signed with Sony's HMAC-SHA256.
-    HmacSha256,
-}
-
-impl Default for SignatureKind {
-    fn default() -> Self {
-        Self::HmacSha1
-    }
-}
-
-impl TryFrom<u32> for SignatureKind {
-    type Error = crate::Error;
-
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
-        match value {
-            0 => Ok(Self::HmacSha1),
-            2 => Ok(Self::HmacSha256),
-            _ => Err(Self::Error::InvalidSignatureKind(value)),
-        }
-    }
-}
-
-impl From<SignatureKind> for u32 {
-    fn from(sig_kind: SignatureKind) -> Self {
-        match sig_kind {
-            SignatureKind::HmacSha1 => 0,
-            SignatureKind::HmacSha256 => 2,
-        }
-    }
-}
-
-impl Display for SignatureKind {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        match self {
-            Self::HmacSha1 => write!(f, "HMAC-SHA1"),
-            Self::HmacSha256 => write!(f, "HMAC-SHA256"),
-        }
-    }
-}
-
-/// The hash digest of a [`Segment`]. Always signed with [`SignatureKind::HmacSha1`].
+/// A SHA-1 digest.
 ///
 /// # Examples
 ///
-/// [`Self::fmt`] formats this digest as a lowercase hexadecimal string:
+/// [`Self::fmt`] formats this as a lowercase hexadecimal string:
 ///
 /// ```
 /// let mut digest = pupper::Digest::default();
@@ -427,8 +399,9 @@ impl FixedSize for Magic {
 
 /// Has a fixed, or constant, size.
 ///
-/// This trait exists to reduce redundancy when writing newtypes of arrays (e.g., [`Digest`],
+/// This trait exists to reduce redundancy when writing `newtype`s of arrays (e.g., [`Digest`],
 /// [`Magic`]).
 pub trait FixedSize {
+    /// The reported size of this object.
     const SIZE: usize;
 }
